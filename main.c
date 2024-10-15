@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
+#include <sys/ioctl.h>
 
 
     /** DEFINES */
@@ -25,7 +26,13 @@
 
 
     /** DATA */
-struct termios orig_termios;
+struct editorConfig {
+    int screenrows;
+    int screencols;
+    struct termios orig_termios;
+};
+
+struct editorConfig E;
 
 typedef enum {
     LOG_ALL = 0,        // Display all logs
@@ -42,17 +49,17 @@ typedef enum {
 
     /** TERMINAL */
 void disableRawMode() {
-    info("tcsetattr c_lflag: %u", orig_termios.c_lflag)
-    error(tcsetattr(STDIN_FILENO, TCSAFLUSH, &orig_termios) == -1,
-          "tcsetattr c_lflag: %u", orig_termios.c_lflag)
+    info("tcsetattr c_lflag: %u", E.orig_termios.c_lflag)
+    error(tcsetattr(STDIN_FILENO, TCSAFLUSH, &E.orig_termios) == -1,
+          "tcsetattr c_lflag: %u", E.orig_termios.c_lflag)
 }
 
 void enableRawMode() {
-    error(tcgetattr(STDIN_FILENO, &orig_termios) == -1,
-          "tcgetattr c_lflag: %u", orig_termios.c_lflag)
+    error(tcgetattr(STDIN_FILENO, &E.orig_termios) == -1,
+          "tcgetattr c_lflag: %u", E.orig_termios.c_lflag)
     atexit(disableRawMode);
 
-    struct termios raw = orig_termios;
+    struct termios raw = E.orig_termios;
     info("tcgetattr c_lflag: %u", raw.c_lflag)
 
     cfmakeraw(&raw);
@@ -74,18 +81,28 @@ char editorReadKey() {
     return c;
 }
 
+int getWindowSize(int* rows, int* cols) {
+    struct winsize ws;
+
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) return -1;
+
+    *cols = ws.ws_col;
+    *rows = ws.ws_row;
+    return 0;
+}
+
 
     /** OUTPUT */
 void editorDrawRows() {
     int y;
-    for (y = 0; y < 24; y++) {
+    for (y = 0; y < E.screenrows; y++) {
         write(STDOUT_FILENO, "~\r\n", 3);
     }
 }
 
 void editorRefreshScreen() {
-    write(STDOUT_FILENO, "\x1b[2J", 4);
-    write(STDOUT_FILENO, "\x1b[H", 3);
+    write(STDOUT_FILENO, "\x1b[2J", 4); // clean the screen
+    write(STDOUT_FILENO, "\x1b[H", 3); // place the cursor in top left
 
     editorDrawRows();
 
@@ -106,8 +123,13 @@ void editorProcessReadKey() {
 
 
     /** INIT */
+void initEditor() {
+    error(getWindowSize(&E.screenrows, &E.screencols) == -1, "getWindowSize\r\n\trows:%d  cols%d", E.screenrows, E.screencols)
+}
+
 int main(){
     enableRawMode();
+    initEditor();
 
     while (1) {
         editorRefreshScreen();
