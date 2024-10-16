@@ -8,11 +8,14 @@
 
 
     /** DEFINES */
+#define DAZO_VERSION "0.0.1"
+
 #define CTRL(x)	(x&037)
 
 
     /** DATA */
 struct editorConfig {
+    int cx, cy;
     int screenrows;
     int screencols;
     struct termios orig_termios;
@@ -35,13 +38,13 @@ typedef enum {
 // TODO add trace log
 
 #define info(FORMAT, ...)                                                                                              \
-    fprintf(stdout, "%s -> %s():%i \r\n\t" FORMAT "\r\n", __FILE_NAME__, __FUNCTION__, __LINE__, ##__VA_ARGS__);       \
+    fprintf(stdout, "\r\n%s -> %s():%i \r\n\t" FORMAT "\r\n", __FILE_NAME__, __FUNCTION__, __LINE__, ##__VA_ARGS__);   \
 
 #define error(ERROR, FORMAT, ...)                                                                                      \
     if (ERROR) {                                                                                                       \
         write(STDOUT_FILENO, "\x1b[2J", 4);                                                                            \
         write(STDOUT_FILENO, "\x1b[H", 3);                                                                             \
-        fprintf(stderr, "\033[1;31m%s -> %s():%i -> Error(%i):\r\n\t%s\r\n\t" FORMAT "\r\n",                           \
+        fprintf(stderr, "\033[1;31m\r\n%s -> %s():%i -> Error(%i):\r\n\t%s\r\n\t" FORMAT "\r\n",                       \
         __FILE_NAME__, __FUNCTION__, __LINE__, errno, strerror(errno), ##__VA_ARGS__);                                 \
         exit(EXIT_FAILURE);                                                                                            \
     }
@@ -78,7 +81,22 @@ char editorReadKey() {
     while ((nread = read(STDIN_FILENO, &c, 1)) != 1)
         error(nread == -1, "read %d ('%c')", c, c)
 
-    return c;
+    if (c == '\x1b') {
+        char seq[3];
+        if (read(STDIN_FILENO, &seq[0], 1) != 1) return '\x1b';
+        if (read(STDIN_FILENO, &seq[1], 1) != 1) return '\x1b';
+        if (seq[0] == '[') {
+            switch (seq[1]) {
+                case 'A': return 'w';
+                case 'B': return 's';
+                case 'C': return 'd';
+                case 'D': return 'a';
+            }
+        }
+        return '\x1b';
+    } else {
+        return c;
+    }
 }
 
         // return line if failed
@@ -137,9 +155,22 @@ void abFree(struct abuf *ab) {
 void editorDrawRows(struct abuf *ab) {
     int y;
     for (y = 0; y < E.screenrows; y++) {
-        abAppend(ab, "~", 1);
+        if (y == E.screenrows / 3) {
+            char welcome[80];
+            int w_len = snprintf(welcome, sizeof (welcome), "DAZO %s", DAZO_VERSION);
+            if (w_len > E.screencols) w_len = E.screencols;
+            int padding = (E.screencols - w_len) / 2;
+            if (padding) {
+                abAppend(ab, "~", 1);
+                padding--;
+            }
+            while (padding--) abAppend(ab, " ", 1);
+            abAppend(ab, welcome, w_len);
+        } else {
+            abAppend(ab, "~", 1);
+        }
 
-        abAppend(ab, "\x1b[J", 3); // clear line
+        abAppend(ab, "\x1b[K", 3); // clear line
 
         if (y < E.screenrows - 1) abAppend(ab, "\r\n", 2);
 
@@ -154,7 +185,10 @@ void editorRefreshScreen() {
 
     editorDrawRows(&ab); // draw ~
 
-    abAppend(&ab, "\x1b[H", 3); // place the cursor in top left
+    char buf[32];
+    snprintf(buf, sizeof (buf), "\x1b[%d;%dH", E.cy + 1, E.cx + 1);
+    abAppend(&ab, buf, (int) strlen(buf));
+
     abAppend(&ab, "\x1b[?25h", 6); // show cursor
 
     write(STDOUT_FILENO, ab.b, ab.len);
@@ -163,6 +197,23 @@ void editorRefreshScreen() {
 
 
     /** INPUT */
+void editorMoveCursor(char key) {
+    switch (key) {
+        case 'a':
+            E.cx--;
+            break;
+        case 'd':
+            E.cx++;
+            break;
+        case 'w':
+            E.cy--;
+            break;
+        case 's':
+            E.cy++;
+            break;
+    }
+}
+
 void editorProcessReadKey() {
     char c = editorReadKey();
 
@@ -170,12 +221,20 @@ void editorProcessReadKey() {
         case CTRL('q'): {}
             exit(EXIT_SUCCESS);
             break;
+        case 'w':
+        case 's':
+        case 'a':
+        case 'd':
+            editorMoveCursor(c);
+            break;
     }
 }
 
 
     /** INIT */
 void initEditor() {
+    E.cx = 0;
+    E.cy = 0;
     int r = getWindowSize(&E.screenrows, &E.screencols);
     error(r != 0, "getWindowSize(): line %d\r\n\trows:%d  cols:%d", r, E.screenrows, E.screencols)
 }
