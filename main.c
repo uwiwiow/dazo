@@ -1,7 +1,6 @@
 #include <termios.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <ctype.h>
 #include <unistd.h>
 #include <errno.h>
 #include <string.h>
@@ -9,20 +8,7 @@
 
 
     /** DEFINES */
-#define info(FORMAT, ...)                                                                                              \
-    fprintf(stdout, "%s -> %s():%i \r\n\t" FORMAT "\r\n", __FILE_NAME__, __FUNCTION__, __LINE__, ##__VA_ARGS__);       \
-
-#define error(ERROR, FORMAT, ...)                                                                                      \
-    if (ERROR) {                                                                                                       \
-        write(STDOUT_FILENO, "\x1b[2J", 4);                                                                            \
-        write(STDOUT_FILENO, "\x1b[H", 3);                                                                             \
-        fprintf(stderr, "\033[1;31m%s -> %s():%i -> Error(%i):\r\n\t%s\r\n\t" FORMAT "\r\n",                           \
-        __FILE_NAME__, __FUNCTION__, __LINE__, errno, strerror(errno), ##__VA_ARGS__);                                 \
-        exit(EXIT_FAILURE);                                                                                            \
-    }
-
 #define CTRL(x)	(x&037)
-// TODO add trace log
 
 
     /** DATA */
@@ -34,6 +20,8 @@ struct editorConfig {
 
 struct editorConfig E;
 
+
+    /** TRACE LOG */
 typedef enum {
     LOG_ALL = 0,        // Display all logs
     LOG_TRACE,          // Trace logging, intended for internal use only
@@ -44,7 +32,19 @@ typedef enum {
     LOG_FATAL,          // Fatal logging, used to abort program: exit(EXIT_FAILURE)
     LOG_NONE            // Disable logging
 } TraceLogLevel;
+// TODO add trace log
 
+#define info(FORMAT, ...)                                                                                              \
+    fprintf(stdout, "%s -> %s():%i \r\n\t" FORMAT "\r\n", __FILE_NAME__, __FUNCTION__, __LINE__, ##__VA_ARGS__);       \
+
+#define error(ERROR, FORMAT, ...)                                                                                      \
+    if (ERROR) {                                                                                                       \
+        write(STDOUT_FILENO, "\x1b[2J", 4);                                                                            \
+        write(STDOUT_FILENO, "\x1b[H", 3);                                                                             \
+        fprintf(stderr, "\033[1;31m%s -> %s():%i -> Error(%i):\r\n\t%s\r\n\t" FORMAT "\r\n",                           \
+        __FILE_NAME__, __FUNCTION__, __LINE__, errno, strerror(errno), ##__VA_ARGS__);                                 \
+        exit(EXIT_FAILURE);                                                                                            \
+    }
 
 
     /** TERMINAL */
@@ -81,32 +81,84 @@ char editorReadKey() {
     return c;
 }
 
-int getWindowSize(int* rows, int* cols) {
-    struct winsize ws;
-
-    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) return -1;
-
-    *cols = ws.ws_col;
-    *rows = ws.ws_row;
+        // return line if failed
+int getCursorPosition(int *rows, int *cols) {
+    char buf[32];
+    unsigned int i = 0;
+    if (write(STDOUT_FILENO, "\x1b[6n", 4) != 4) return __LINE__;
+    while (i < sizeof(buf) - 1) {
+        if (read(STDIN_FILENO, &buf[i], 1) != 1) break;
+        if (buf[i] == 'R') break;
+        i++;
+    }
+    buf[i] = '\0';
+    if (buf[0] != '\x1b' || buf[1] != '[') return __LINE__;
+    if (sscanf(&buf[2], "%d;%d", rows, cols) != 2) return __LINE__;
     return 0;
+}
+
+        // return line if failed
+int getWindowSize(int *rows, int *cols) {
+    struct winsize ws;
+    if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == -1 || ws.ws_col == 0) {
+        if (write(STDOUT_FILENO, "\x1b[999C\x1b[999B", 12) != 12) return __LINE__;
+        return getCursorPosition(rows, cols);
+    } else {
+        *cols = ws.ws_col;
+        *rows = ws.ws_row;
+        return 0;
+    }
+}
+
+
+    /** APPEND BUFFER */
+struct abuf {
+    char *b;
+    int len;
+};
+
+#define ABUF_INIT {NULL, 0}
+
+void abAppend(struct abuf *ab, const char *s, int len) {
+    char *new = realloc(ab->b, ab->len + len); // p gets more allocated mem, conserve data
+
+    if (new == NULL) return;
+    memcpy(&new[ab->len], s, len); // add the new data at the end
+    ab->b = new; // in the abuf struct set *new on *b bc of realloc
+    ab->len += len; // in the abuf struct set new len from *s
+}
+
+void abFree(struct abuf *ab) {
+    free(ab->b);
 }
 
 
     /** OUTPUT */
-void editorDrawRows() {
+void editorDrawRows(struct abuf *ab) {
     int y;
     for (y = 0; y < E.screenrows; y++) {
-        write(STDOUT_FILENO, "~\r\n", 3);
+        abAppend(ab, "~", 1);
+
+        abAppend(ab, "\x1b[J", 3); // clear line
+
+        if (y < E.screenrows - 1) abAppend(ab, "\r\n", 2);
+
     }
 }
 
 void editorRefreshScreen() {
-    write(STDOUT_FILENO, "\x1b[2J", 4); // clean the screen
-    write(STDOUT_FILENO, "\x1b[H", 3); // place the cursor in top left
+    struct abuf ab = ABUF_INIT;
 
-    editorDrawRows();
+    abAppend(&ab, "\x1b[?25l", 6); // hide cursor
+    abAppend(&ab, "\x1b[H", 3); // place the cursor in top left
 
-    write(STDOUT_FILENO, "\x1b[H", 3);
+    editorDrawRows(&ab); // draw ~
+
+    abAppend(&ab, "\x1b[H", 3); // place the cursor in top left
+    abAppend(&ab, "\x1b[?25h", 6); // show cursor
+
+    write(STDOUT_FILENO, ab.b, ab.len);
+    abFree(&ab);
 }
 
 
@@ -124,7 +176,8 @@ void editorProcessReadKey() {
 
     /** INIT */
 void initEditor() {
-    error(getWindowSize(&E.screenrows, &E.screencols) == -1, "getWindowSize\r\n\trows:%d  cols%d", E.screenrows, E.screencols)
+    int r = getWindowSize(&E.screenrows, &E.screencols);
+    error(r != 0, "getWindowSize(): line %d\r\n\trows:%d  cols:%d", r, E.screenrows, E.screencols)
 }
 
 int main(){
