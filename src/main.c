@@ -2,9 +2,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
-#include <errno.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include "log.h"
 
 
     /** DEFINES */
@@ -22,32 +22,6 @@ struct editorConfig {
 };
 
 struct editorConfig E;
-
-
-    /** TRACE LOG */
-typedef enum {
-    LOG_ALL = 0,        // Display all logs
-    LOG_TRACE,          // Trace logging, intended for internal use only
-    LOG_DEBUG,          // Debug logging, used for internal debugging, it should be disabled on release builds
-    LOG_INFO,           // Info logging, used for program execution info
-    LOG_WARNING,        // Warning logging, used on recoverable failures
-    LOG_ERROR,          // Error logging, used on unrecoverable failures
-    LOG_FATAL,          // Fatal logging, used to abort program: exit(EXIT_FAILURE)
-    LOG_NONE            // Disable logging
-} TraceLogLevel;
-// TODO add trace log
-
-#define info(FORMAT, ...)                                                                                              \
-    fprintf(stdout, "\r\n%s -> %s():%i \r\n\t" FORMAT "\r\n", __FILE_NAME__, __FUNCTION__, __LINE__, ##__VA_ARGS__);   \
-
-#define error(ERROR, FORMAT, ...)                                                                                      \
-    if (ERROR) {                                                                                                       \
-        write(STDOUT_FILENO, "\x1b[2J", 4);                                                                            \
-        write(STDOUT_FILENO, "\x1b[H", 3);                                                                             \
-        fprintf(stderr, "\033[1;31m\r\n%s -> %s():%i -> Error(%i):\r\n\t%s\r\n\t" FORMAT "\r\n",                       \
-        __FILE_NAME__, __FUNCTION__, __LINE__, errno, strerror(errno), ##__VA_ARGS__);                                 \
-        exit(EXIT_FAILURE);                                                                                            \
-    }
 
 
     /** TERMINAL */

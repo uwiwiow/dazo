@@ -3,4 +3,7 @@ project(dazo C)
 
 set(CMAKE_C_STANDARD 23)
 
-add_executable(dazo main.c)
+add_executable(dazo
+        src/main.c
+        src/log.c
+        src/log.h)
